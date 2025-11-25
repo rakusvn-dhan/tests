@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         楽楽販売 - Absence Hour Calculator
+// @name         楽楽販売 - Absence Hour Calculator + Auto Fill
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Tự động tính toán số giờ nghỉ phép dựa trên giờ From và To, không tính thời gian nghỉ trưa (12h-13h)
+// @version      1.3
+// @description  [Chỉ chạy trên trang Absence Regist] Tự động điền Employee Number + Nhấn nút 取得 + Tính toán giờ nghỉ phép (không tính 12h-13h)
 // @author       Claude
 // @match        https://ta.htdb.jp/z24nv8a/*
 // @grant        none
@@ -11,11 +11,29 @@
 (function() {
     'use strict';
 
+    // Kiểm tra xem trang có chứa "Absence Regist" không
+    function isAbsenceRegistPage() {
+        return document.body.textContent.includes('Absence Regist');
+    }
+
+    // Nếu không phải trang Absence Regist, không chạy script
+    if (!isAbsenceRegistPage()) {
+        console.log('Script chỉ chạy trên trang Absence Regist');
+        return;
+    }
+
+    const employeeNumberToFill = 'R122'; // Mã nhân viên để tự động điền
+
     // Hàm tìm element theo tên cột header
     function findFieldByHeader(headerText) {
-        // Tìm tất cả các th có text khớp với headerText
-        const headers = Array.from(document.querySelectorAll('th.edit'));
-        const targetHeader = headers.find(th => th.textContent.includes(headerText));
+        // Tìm tất cả các th (không giới hạn class)
+        const headers = Array.from(document.querySelectorAll('th'));
+
+        // Tìm header có text khớp chính xác (loại bỏ khoảng trắng và dấu *)
+        const targetHeader = headers.find(th => {
+            const cleanText = th.textContent.replace(/\*/g, '').trim();
+            return cleanText === headerText || cleanText.includes(headerText);
+        });
 
         if (!targetHeader) return null;
 
@@ -26,6 +44,37 @@
         // Trích xuất số ID (ví dụ: 102234)
         const fieldId = headerId.replace('tr_', '');
         return fieldId;
+    }
+
+    // Hàm tự động điền Employee Number và nhấn nút "取得"
+    function autoFillEmployeeNumber() {
+        const employeeFieldId = findFieldByHeader('Employee Number');
+        if (!employeeFieldId) return;
+
+        const employeeInput = document.getElementById(`field_${employeeFieldId}`);
+        if (!employeeInput) return;
+
+        // Kiểm tra xem trường đã có giá trị chưa
+        if (employeeInput.value && employeeInput.value.trim() !== '') return;
+
+        // Điền Employee Number vào trường
+        employeeInput.value = employeeNumberToFill;
+
+        // Trigger các sự kiện để form nhận biết thay đổi
+        employeeInput.dispatchEvent(new Event('input', { bubbles: true }));
+        employeeInput.dispatchEvent(new Event('change', { bubbles: true }));
+        employeeInput.dispatchEvent(new Event('keyup', { bubbles: true }));
+
+        // Tìm và nhấn nút "取得"
+        setTimeout(function() {
+            const label = employeeInput.closest('label');
+            if (label) {
+                const getButton = Array.from(label.querySelectorAll('a')).find(a => a.textContent.includes('取得'));
+                if (getButton) {
+                    getButton.click();
+                }
+            }
+        }, 500);
     }
 
     // Hàm lấy giá trị giờ/phút từ select elements
@@ -41,23 +90,16 @@
         const toFieldId = findFieldByHeader('To');
         const hourAbsentFieldId = findFieldByHeader('Hour Absent');
 
-        if (!fromFieldId || !toFieldId || !hourAbsentFieldId) {
-            console.warn('Absence Calculator: Không tìm thấy các trường cần thiết');
-            return;
-        }
+        if (!fromFieldId || !toFieldId || !hourAbsentFieldId) return;
 
-        // Lấy giá trị From
+        // Lấy giá trị From và To
         const fromHour = getTimeValue(fromFieldId, 'hour');
         const fromMinute = getTimeValue(fromFieldId, 'minute');
-
-        // Lấy giá trị To
         const toHour = getTimeValue(toFieldId, 'hour');
         const toMinute = getTimeValue(toFieldId, 'minute');
 
         // Kiểm tra nếu các giá trị hợp lệ
-        if (isNaN(fromHour) || isNaN(fromMinute) || isNaN(toHour) || isNaN(toMinute)) {
-            return;
-        }
+        if (isNaN(fromHour) || isNaN(fromMinute) || isNaN(toHour) || isNaN(toMinute)) return;
 
         // Chuyển đổi sang phút để tính toán dễ dàng hơn
         const fromTotalMinutes = fromHour * 60 + fromMinute;
@@ -97,24 +139,17 @@
         const hourAbsentField = document.getElementById(`field_${hourAbsentFieldId}`);
         if (hourAbsentField) {
             hourAbsentField.value = absentHours;
-
             // Thay đổi màu nền để báo hiệu đã được tính toán
             hourAbsentField.style.background = '#e6f9ff';
-
-            console.log(`Absence Calculator: Đã tính toán ${absentHours} giờ (${fromHour}:${fromMinute} → ${toHour}:${toMinute})`);
         }
     }
 
     // Hàm khởi tạo các sự kiện lắng nghe
     function initializeListeners() {
-        // Tìm field ID cho From và To dựa trên header
         const fromFieldId = findFieldByHeader('From');
         const toFieldId = findFieldByHeader('To');
 
-        if (!fromFieldId || !toFieldId) {
-            console.warn('Absence Calculator: Không tìm thấy form phù hợp');
-            return;
-        }
+        if (!fromFieldId || !toFieldId) return;
 
         // Tìm các dropdown của From và To
         const fromHourSelect = document.getElementById(`hour_${fromFieldId}`);
@@ -123,20 +158,10 @@
         const toMinuteSelect = document.getElementById(`minute_${toFieldId}`);
 
         // Thêm sự kiện change cho tất cả các dropdown
-        if (fromHourSelect) {
-            fromHourSelect.addEventListener('change', calculateAbsentHours);
-        }
-        if (fromMinuteSelect) {
-            fromMinuteSelect.addEventListener('change', calculateAbsentHours);
-        }
-        if (toHourSelect) {
-            toHourSelect.addEventListener('change', calculateAbsentHours);
-        }
-        if (toMinuteSelect) {
-            toMinuteSelect.addEventListener('change', calculateAbsentHours);
-        }
-
-        console.log(`Absence Hour Calculator: Đã khởi tạo thành công! (From ID: ${fromFieldId}, To ID: ${toFieldId})`);
+        if (fromHourSelect) fromHourSelect.addEventListener('change', calculateAbsentHours);
+        if (fromMinuteSelect) fromMinuteSelect.addEventListener('change', calculateAbsentHours);
+        if (toHourSelect) toHourSelect.addEventListener('change', calculateAbsentHours);
+        if (toMinuteSelect) toMinuteSelect.addEventListener('change', calculateAbsentHours);
 
         // Tính toán ngay lần đầu nếu đã có giá trị
         calculateAbsentHours();
@@ -144,10 +169,14 @@
 
     // Chờ DOM tải xong rồi mới khởi tạo
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initializeListeners);
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeListeners();
+            autoFillEmployeeNumber();
+        });
     } else {
         // DOM đã tải xong
         initializeListeners();
+        autoFillEmployeeNumber();
     }
 
     // Đối với các trang sử dụng iframe, có thể cần thêm delay
@@ -155,6 +184,7 @@
         // Kiểm tra xem có đang trong iframe không
         if (window.name === 'main') {
             initializeListeners();
+            autoFillEmployeeNumber();
         }
     }, 1000);
 
