@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         楽楽販売 - Absence Hour Calculator + Auto Fill
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  [Chỉ chạy trên trang Absence Regist] Tự động điền Employee Number + Nhấn nút 取得 + Tính toán giờ nghỉ phép (không tính 12h-13h)
+// @version      1.4
+// @description  [Absence Regist] Auto: Employee Number + 取得 + Reason + Approval Flow + Filter Minutes(0,30) + Calculate Hours
 // @author       Claude
 // @match        https://ta.htdb.jp/z24nv8a/*
 // @grant        none
@@ -22,7 +22,11 @@
         return;
     }
 
+    // ========== CẤU HÌNH ==========
     const employeeNumberToFill = 'R122'; // Mã nhân viên để tự động điền
+    const teamNameToFill = 'RRS1'; // Tên team để chọn approval flow (ví dụ: RRS1, RRS2, MD, GA...)
+    const defaultReason = 'Việc cá nhân'; // Lý do nghỉ mặc định
+    // ===============================
 
     // Hàm tìm element theo tên cột header
     function findFieldByHeader(headerText) {
@@ -75,6 +79,55 @@
                 }
             }
         }, 500);
+    }
+
+    // Hàm tự động điền Reason (lý do nghỉ)
+    function autoFillReason() {
+        const reasonFieldId = findFieldByHeader('Reason');
+        if (!reasonFieldId) return;
+
+        const reasonTextarea = document.getElementById(`field_${reasonFieldId}`);
+        if (!reasonTextarea) return;
+
+        // Kiểm tra xem trường đã có giá trị chưa
+        if (reasonTextarea.value && reasonTextarea.value.trim() !== '') return;
+
+        // Điền lý do mặc định
+        reasonTextarea.value = defaultReason;
+    }
+
+    // Hàm loại bỏ các option phút không phải 0 và 30
+    function filterMinuteOptions() {
+        const minuteSelects = document.querySelectorAll('select[id^="minute_"]');
+
+        minuteSelects.forEach(select => {
+            const options = Array.from(select.options);
+            options.forEach(option => {
+                const value = option.value;
+                // Giữ lại: empty value (""), 0, và 30
+                if (value !== '' && value !== '0' && value !== '30') {
+                    option.remove();
+                }
+            });
+        });
+    }
+
+    // Hàm tự động chọn approval flow theo team name
+    function autoSelectApprovalFlow() {
+        const approvalSelect = document.getElementById('approvalFlowId');
+        if (!approvalSelect) return;
+
+        // Tìm option có text chứa team name
+        const options = Array.from(approvalSelect.options);
+        const matchingOption = options.find(option =>
+            option.text.includes(teamNameToFill)
+        );
+
+        if (matchingOption) {
+            approvalSelect.value = matchingOption.value;
+            // Trigger change event
+            approvalSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
     }
 
     // Hàm lấy giá trị giờ/phút từ select elements
@@ -167,16 +220,24 @@
         calculateAbsentHours();
     }
 
+    // Hàm khởi tạo tất cả auto-fill
+    function initializeAutoFill() {
+        autoFillEmployeeNumber();
+        autoFillReason();
+        autoSelectApprovalFlow();
+        filterMinuteOptions();
+    }
+
     // Chờ DOM tải xong rồi mới khởi tạo
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {
             initializeListeners();
-            autoFillEmployeeNumber();
+            initializeAutoFill();
         });
     } else {
         // DOM đã tải xong
         initializeListeners();
-        autoFillEmployeeNumber();
+        initializeAutoFill();
     }
 
     // Đối với các trang sử dụng iframe, có thể cần thêm delay
@@ -184,7 +245,7 @@
         // Kiểm tra xem có đang trong iframe không
         if (window.name === 'main') {
             initializeListeners();
-            autoFillEmployeeNumber();
+            initializeAutoFill();
         }
     }, 1000);
 
