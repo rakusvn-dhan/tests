@@ -41,7 +41,6 @@
     const employeeNumberToFill = 'R122'; // Mã nhân viên để tự động điền
     const teamNameToFill = 'RRS1'; // Tên team để chọn approval flow (ví dụ: RRS1, RRS2, MD, GA...)
     const defaultAbsenceReason = 'Việc cá nhân'; // Lý do nghỉ mặc định cho Absence
-    const defaultOvertimeReason = 'Làm thêm giờ'; // Lý do mặc định cho Overtime
     // ===============================
 
     // Hàm tìm element theo tên cột header
@@ -109,8 +108,7 @@
         if (reasonTextarea.value && reasonTextarea.value.trim() !== '') return;
 
         // Điền lý do mặc định dựa trên loại trang
-        const defaultReason = pageType === 'overtime' ? defaultOvertimeReason : defaultAbsenceReason;
-        reasonTextarea.value = defaultReason;
+        reasonTextarea.value = defaultAbsenceReason;
     }
 
     // Hàm loại bỏ các option phút không phải 0 và 30
