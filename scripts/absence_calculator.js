@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         楽楽販売 - Absence Hour Calculator + Auto Fill
+// @name         楽楽販売 - Absence & Overtime Calculator + Auto Fill
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  [Absence Regist] Auto: Employee Number + 取得 + Reason + Approval Flow + Filter Minutes(0,30) + Calculate Hours
+// @version      2.0
+// @description  [Absence/Overtime Regist] Auto: Employee Number + 取得 + Reason + Approval Flow + Filter Minutes(0,30) + Calculate Hours
 // @author       Claude
 // @match        https://ta.htdb.jp/z24nv8a/*
 // @grant        none
@@ -11,21 +11,37 @@
 (function() {
     'use strict';
 
-    // Kiểm tra xem trang có chứa "Absence Regist" không
-    function isAbsenceRegistPage() {
-        return document.body.textContent.includes('Absence Regist');
+    // Kiểm tra xem trang có chứa "Absence Regist" hoặc "OvertimeApplication" không
+    function isTargetPage() {
+        const pageText = document.body.textContent;
+        return pageText.includes('Absence Regist') || pageText.includes('OvertimeApplication');
     }
 
-    // Nếu không phải trang Absence Regist, không chạy script
-    if (!isAbsenceRegistPage()) {
-        console.log('Script chỉ chạy trên trang Absence Regist');
+    // Xác định loại trang
+    function getPageType() {
+        const pageText = document.body.textContent;
+        if (pageText.includes('Absence Regist')) {
+            return 'absence';
+        } else if (pageText.includes('OvertimeApplication')) {
+            return 'overtime';
+        }
+        return null;
+    }
+
+    // Nếu không phải trang Absence Regist hoặc Overtime, không chạy script
+    if (!isTargetPage()) {
+        console.log('Script chỉ chạy trên trang Absence Regist hoặc OvertimeApplication');
         return;
     }
+
+    const pageType = getPageType();
+    console.log('Đang chạy script cho trang:', pageType);
 
     // ========== CẤU HÌNH ==========
     const employeeNumberToFill = 'R122'; // Mã nhân viên để tự động điền
     const teamNameToFill = 'RRS1'; // Tên team để chọn approval flow (ví dụ: RRS1, RRS2, MD, GA...)
-    const defaultReason = 'Việc cá nhân'; // Lý do nghỉ mặc định
+    const defaultAbsenceReason = 'Việc cá nhân'; // Lý do nghỉ mặc định cho Absence
+    const defaultOvertimeReason = 'Làm thêm giờ'; // Lý do mặc định cho Overtime
     // ===============================
 
     // Hàm tìm element theo tên cột header
@@ -81,7 +97,7 @@
         }, 500);
     }
 
-    // Hàm tự động điền Reason (lý do nghỉ)
+    // Hàm tự động điền Reason (lý do nghỉ/overtime)
     function autoFillReason() {
         const reasonFieldId = findFieldByHeader('Reason');
         if (!reasonFieldId) return;
@@ -92,7 +108,8 @@
         // Kiểm tra xem trường đã có giá trị chưa
         if (reasonTextarea.value && reasonTextarea.value.trim() !== '') return;
 
-        // Điền lý do mặc định
+        // Điền lý do mặc định dựa trên loại trang
+        const defaultReason = pageType === 'overtime' ? defaultOvertimeReason : defaultAbsenceReason;
         reasonTextarea.value = defaultReason;
     }
 
@@ -136,14 +153,42 @@
         return parseInt(element?.value || '0');
     }
 
-    // Hàm tính toán số giờ nghỉ
-    function calculateAbsentHours() {
+    // Hàm tính toán số giờ (absence hoặc overtime)
+    function calculateHours() {
         // Tìm field ID cho From và To dựa trên header
         const fromFieldId = findFieldByHeader('From');
         const toFieldId = findFieldByHeader('To');
-        const hourAbsentFieldId = findFieldByHeader('Hour Absent');
 
-        if (!fromFieldId || !toFieldId || !hourAbsentFieldId) return;
+        // Tìm trường output dựa trên loại trang
+        let hourFieldId;
+        if (pageType === 'overtime') {
+            // Thử nhiều biến thể tên có thể có cho trường Total/Hours của Overtime
+            hourFieldId = findFieldByHeader('Total')
+                       || findFieldByHeader('OvertimeHours')
+                       || findFieldByHeader('Hours')
+                       || findFieldByHeader('Overtime Hours')
+                       || findFieldByHeader('Hour');
+
+            console.log('Overtime - Tìm trường giờ:', hourFieldId);
+        } else {
+            hourFieldId = findFieldByHeader('Hour Absent');
+            console.log('Absence - Tìm trường giờ:', hourFieldId);
+        }
+
+        if (!fromFieldId || !toFieldId) {
+            console.log('Không tìm thấy From hoặc To field');
+            return;
+        }
+
+        if (!hourFieldId) {
+            console.log('Không tìm thấy trường giờ output. Đang in tất cả headers:');
+            // Debug: in tất cả headers ra console
+            Array.from(document.querySelectorAll('th')).forEach(th => {
+                const cleanText = th.textContent.replace(/\*/g, '').trim();
+                console.log('Header:', cleanText, '| ID:', th.id);
+            });
+            return;
+        }
 
         // Lấy giá trị From và To
         const fromHour = getTimeValue(fromFieldId, 'hour');
@@ -160,9 +205,9 @@
 
         // Kiểm tra nếu To phải lớn hơn From
         if (toTotalMinutes <= fromTotalMinutes) {
-            const hourAbsentField = document.getElementById(`field_${hourAbsentFieldId}`);
-            if (hourAbsentField) {
-                hourAbsentField.value = '0';
+            const hourField = document.getElementById(`field_${hourFieldId}`);
+            if (hourField) {
+                hourField.value = '0';
             }
             return;
         }
@@ -170,30 +215,34 @@
         // Tính tổng số phút làm việc
         let totalMinutes = toTotalMinutes - fromTotalMinutes;
 
-        // Thời gian nghỉ trưa: 12:00 - 13:00 (720 phút đến 780 phút)
-        const lunchStart = 12 * 60; // 12:00 = 720 phút
-        const lunchEnd = 13 * 60;   // 13:00 = 780 phút
+        // Chỉ trừ giờ nghỉ trưa cho trang Absence
+        // Overtime thường không cần trừ giờ nghỉ trưa vì làm ngoài giờ
+        if (pageType === 'absence') {
+            // Thời gian nghỉ trưa: 12:00 - 13:00 (720 phút đến 780 phút)
+            const lunchStart = 12 * 60; // 12:00 = 720 phút
+            const lunchEnd = 13 * 60;   // 13:00 = 780 phút
 
-        // Kiểm tra xem có bị trùng với giờ nghỉ trưa không
-        if (fromTotalMinutes < lunchEnd && toTotalMinutes > lunchStart) {
-            // Tính phần trùng với giờ nghỉ trưa
-            const overlapStart = Math.max(fromTotalMinutes, lunchStart);
-            const overlapEnd = Math.min(toTotalMinutes, lunchEnd);
-            const lunchMinutes = overlapEnd - overlapStart;
+            // Kiểm tra xem có bị trùng với giờ nghỉ trưa không
+            if (fromTotalMinutes < lunchEnd && toTotalMinutes > lunchStart) {
+                // Tính phần trùng với giờ nghỉ trưa
+                const overlapStart = Math.max(fromTotalMinutes, lunchStart);
+                const overlapEnd = Math.min(toTotalMinutes, lunchEnd);
+                const lunchMinutes = overlapEnd - overlapStart;
 
-            // Trừ đi thời gian nghỉ trưa
-            totalMinutes -= lunchMinutes;
+                // Trừ đi thời gian nghỉ trưa
+                totalMinutes -= lunchMinutes;
+            }
         }
 
         // Chuyển đổi từ phút sang giờ (làm tròn 2 chữ số thập phân)
-        const absentHours = (totalMinutes / 60).toFixed(2);
+        const calculatedHours = (totalMinutes / 60).toFixed(2);
 
-        // Cập nhật vào trường Hour Absent
-        const hourAbsentField = document.getElementById(`field_${hourAbsentFieldId}`);
-        if (hourAbsentField) {
-            hourAbsentField.value = absentHours;
+        // Cập nhật vào trường giờ
+        const hourField = document.getElementById(`field_${hourFieldId}`);
+        if (hourField) {
+            hourField.value = calculatedHours;
             // Thay đổi màu nền để báo hiệu đã được tính toán
-            hourAbsentField.style.background = '#e6f9ff';
+            hourField.style.background = '#e6f9ff';
         }
     }
 
@@ -211,13 +260,13 @@
         const toMinuteSelect = document.getElementById(`minute_${toFieldId}`);
 
         // Thêm sự kiện change cho tất cả các dropdown
-        if (fromHourSelect) fromHourSelect.addEventListener('change', calculateAbsentHours);
-        if (fromMinuteSelect) fromMinuteSelect.addEventListener('change', calculateAbsentHours);
-        if (toHourSelect) toHourSelect.addEventListener('change', calculateAbsentHours);
-        if (toMinuteSelect) toMinuteSelect.addEventListener('change', calculateAbsentHours);
+        if (fromHourSelect) fromHourSelect.addEventListener('change', calculateHours);
+        if (fromMinuteSelect) fromMinuteSelect.addEventListener('change', calculateHours);
+        if (toHourSelect) toHourSelect.addEventListener('change', calculateHours);
+        if (toMinuteSelect) toMinuteSelect.addEventListener('change', calculateHours);
 
         // Tính toán ngay lần đầu nếu đã có giá trị
-        calculateAbsentHours();
+        calculateHours();
     }
 
     // Hàm khởi tạo tất cả auto-fill
